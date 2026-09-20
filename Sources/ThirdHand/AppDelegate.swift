@@ -185,7 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, TaskRunnerDelegate, Ob
     @objc func promptAPIKey() {
         let alert = NSAlert()
         alert.messageText = "Enter API Key"
-        alert.informativeText = "Jev API key (TypeSafe), stored in macOS Keychain. The goal, observed accessibility text, and recent action results are sent to TypeSafe. Screenshots and OCR processing stay on this Mac. Jev selects text from your request; free-form writing is not supported. Jev remains a remote text-only service."
+        alert.informativeText = "Vercel AI Gateway API key for Jev, stored in macOS Keychain. The goal, observed accessibility text, and recent action results are sent through Vercel to TypeSafe. A valid card must be registered with Vercel. Screenshots and OCR processing stay on this Mac. Jev selects text from your request; free-form writing is not supported. Jev remains a remote text-only service."
         alert.alertStyle = .informational
 
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))

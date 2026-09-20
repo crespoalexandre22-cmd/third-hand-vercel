@@ -16,3 +16,7 @@ Third Hand.app/
 
 # Release archives
 dist/
+
+# Local verification notes and exported credentials
+VERIFICATION.md
+*.env

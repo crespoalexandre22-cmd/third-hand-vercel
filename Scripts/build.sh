@@ -32,7 +32,9 @@ fi
 
 echo "Building…"
 swift build -c release
-APP="$BUILD/$NAME.app"
+# File-provider folders can add FinderInfo while signing; use a local staging directory.
+SIGN_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/thirdhand-sign.XXXXXX")"
+APP="$SIGN_STAGE/$NAME.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BUILD/ThirdHand" "$APP/Contents/MacOS/ThirdHand"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
@@ -72,6 +74,7 @@ if $INSTALL; then
     echo "Updated: $INSTALLED"
     echo "Previous copy retained in: $STAGE"
 else
-    echo "Built: $APP"
+    ditto "$APP" "$BUILD/$NAME.app"
+    echo "Built: $BUILD/$NAME.app"
     echo "Install updates at the fixed app path with: bash Scripts/build.sh --install"
 fi

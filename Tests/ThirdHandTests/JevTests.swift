@@ -75,7 +75,7 @@ final class JevTests: XCTestCase {
 
     func testSelectorDoesNotGenerateTextOrSendScreenshots() throws {
         let body = JevClient.requestBody(goal: "Search music", elements: [element(1, "AXTextField")], appName: "Example", history: [])
-        XCTAssertEqual(body["model"] as? String, "jev-latest")
+        XCTAssertNil(body["model"])
         let questions = body["questions"] as! [String: Any]
         XCTAssertNotNil(questions["type_text_target"])
         XCTAssertNil(questions["type_text_value"])
@@ -103,6 +103,8 @@ final class JevTests: XCTestCase {
         let ocr = AccessibilityElement(id: 2, role: "AXStaticText", label: "Save", value: nil, enabled: true,
             actions: [], axElement: nil, frame: CGRect(x: 0, y: 0, width: 40, height: 20), source: "ocr")
         let result = try await client.decide(goal: "Click Save", elements: [ocr], appName: "Test", history: [])
+        XCTAssertEqual(result.done, 0.2)
+        XCTAssertEqual(result.absent, 0.1)
         XCTAssertEqual(result.decision.operation, "CLICK_TEXT")
         XCTAssertEqual(result.decision.targetIndex, "2")
     }
@@ -172,9 +174,12 @@ private final class TextOnlyProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        XCTAssertEqual(request.url?.host, "api.typesafe.ai")
-        XCTAssertEqual(request.url?.path, "/v1/systemone")
+        XCTAssertEqual(request.url?.host, "ai-gateway.vercel.sh")
+        XCTAssertEqual(request.url?.path, "/v4/ai/evaluation-model")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer selector-key")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "ai-model-id"), "typesafe-ai/jev")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "ai-evaluation-model-specification-version"), "4")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "ai-gateway-protocol-version"), "0.0.1")
         var data = request.httpBody ?? Data()
         if let stream = request.httpBodyStream {
             stream.open()
@@ -187,7 +192,10 @@ private final class TextOnlyProtocol: URLProtocol {
             }
         }
         let body = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
-        XCTAssertEqual(Set(body.keys), ["model", "questions", "state"])
+        XCTAssertEqual(Set(body.keys), ["questions", "state"])
+        let questions = body["questions"] as! [String: [String: Any]]
+        XCTAssertEqual(questions["done"]?["type"] as? String, "boolean")
+        XCTAssertEqual(questions["absent"]?["type"] as? String, "boolean")
         let state = body["state"] as! [String: Any]
         let elements = state["elements"] as! [[String: Any]]
         XCTAssertEqual(elements[0]["source"] as? String, "ocr")
@@ -195,7 +203,7 @@ private final class TextOnlyProtocol: URLProtocol {
         XCTAssertEqual(elements[0]["label"] as? String, "Save")
         let serialized = String(decoding: data, as: UTF8.self)
         for forbidden in ["image_url", "base64", "screenshot", "data:image"] { XCTAssertFalse(serialized.contains(forbidden)) }
-        let payload = #"{"answers":{"operation":{"choice":"CLICK_TEXT"},"click_text_target":{"choice":"2"}}}"#
+        let payload = #"{"answers":{"done":{"type":"boolean","probability":0.2},"absent":{"type":"boolean","probability":0.1},"operation":{"type":"choice","choice":"CLICK_TEXT"},"click_text_target":{"type":"choice","choice":"2"}}}"#
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data(payload.utf8))
         client?.urlProtocolDidFinishLoading(self)
@@ -233,7 +241,7 @@ private final class CompletionProtocol: URLProtocol {
         let questions = body["questions"] as! [String: Any]
         XCTAssertEqual(Set(questions.keys), ["done"])
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(#"{"answers":{"done":{"noul":0.95}}}"#.utf8))
+        client?.urlProtocol(self, didLoad: Data(#"{"answers":{"done":{"type":"boolean","probability":0.95}}}"#.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}

@@ -26,10 +26,23 @@ final class JevClient {
     nonisolated private static let noneKey = "__none__"
 
     init(apiKey: String, session: URLSession = .shared,
-         endpoint: URL = URL(string: "https://api.typesafe.ai/v1/systemone")!) {
+         endpoint: URL = URL(string: "https://ai-gateway.vercel.sh/v4/ai/evaluation-model")!) {
         self.apiKey = apiKey
         self.session = session
         self.endpoint = endpoint
+    }
+
+    // Matches the AI SDK Gateway evaluation-model v4 wire protocol.
+    private func gatewayRequest() -> URLRequest {
+        var request = URLRequest(url: endpoint, timeoutInterval: 15)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("0.0.1", forHTTPHeaderField: "ai-gateway-protocol-version")
+        request.setValue("api-key", forHTTPHeaderField: "ai-gateway-auth-method")
+        request.setValue("4", forHTTPHeaderField: "ai-evaluation-model-specification-version")
+        request.setValue("typesafe-ai/jev", forHTTPHeaderField: "ai-model-id")
+        return request
     }
 
     nonisolated static func targets(_ elements: [AccessibilityElement]) -> [String: [String: AccessibilityElement]] {
@@ -121,11 +134,11 @@ final class JevClient {
 
         var questions: [String: Any] = [
             "done": [
-                "type": "noul",
+                "type": "boolean",
                 "instructions": "Has this task been completed: \"\(goal)\"? Judge only by what is visible on screen and actions already taken."
             ] as [String: Any],
             "absent": [
-                "type": "noul",
+                "type": "boolean",
                 "instructions": "Is the control needed for the next step of \"\(goal)\" missing from the elements on screen?"
             ] as [String: Any],
             "operation": [
@@ -151,7 +164,7 @@ final class JevClient {
             ] as [String: Any]
         }
 
-        return ["model": "jev-latest", "questions": questions, "state": state]
+        return ["questions": questions, "state": state]
     }
 
     // Application budget, deliberately below the service's context limits.
@@ -205,10 +218,7 @@ final class JevClient {
     }
 
     func decide(goal: String, elements: [AccessibilityElement], appName: String, history: [ActionHistory]) async throws -> JevResult {
-        var request = URLRequest(url: endpoint, timeoutInterval: 15)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var request = gatewayRequest()
         let prepared = try Self.preparedRequest(goal: goal, elements: elements, appName: appName, history: history)
         request.httpBody = prepared.data
         let offered = prepared.offered
@@ -243,11 +253,8 @@ final class JevClient {
         func ask(_ questions: [String: Any], intent: String? = nil) async throws -> [String: [String: Any]] {
             var context = state
             if let intent { context["selectedIntent"] = intent }
-            let body: [String: Any] = ["model": "jev-latest", "state": context, "questions": questions]
-            var request = URLRequest(url: endpoint, timeoutInterval: 15)
-            request.httpMethod = "POST"
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let body: [String: Any] = ["state": context, "questions": questions]
+            var request = gatewayRequest()
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
             guard request.httpBody!.count <= Self.maxRequestBytes else { throw ControllerError.invalid("Text choices exceed the request budget. Please use a shorter request or quote the exact text.") }
             let (data, response) = try await AsyncTimeout.run(seconds: 15, message: "Text selection timed out.") { [session] in try await session.data(for: request) }
@@ -291,13 +298,10 @@ final class JevClient {
         let prepared = try Self.preparedRequest(goal: goal, elements: elements, appName: appName, history: history)
         var body = try JSONSerialization.jsonObject(with: prepared.data) as! [String: Any]
         body["questions"] = ["done": [
-            "type": "noul",
+            "type": "boolean",
             "instructions": "Are ALL requirements of the task already satisfied by the current screen and recorded actions? For playback, the requested media must be the current item and playing; a search result or Play button alone is not proof. Earlier failed attempts do not invalidate a presently confirmed outcome. Do not suggest further actions."
         ]]
-        var request = URLRequest(url: endpoint, timeoutInterval: 15)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var request = gatewayRequest()
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await AsyncTimeout.run(seconds: 15, message: "Completion check timed out.") { [session] in
             try await session.data(for: request)
@@ -311,7 +315,7 @@ final class JevClient {
         }
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let answers = json?["answers"] as? [String: Any]
-        guard let done = (answers?["done"] as? [String: Any])?["noul"] as? Double,
+        guard let done = (answers?["done"] as? [String: Any])?["probability"] as? Double,
               done.isFinite, (0...1).contains(done) else {
             throw ControllerError.invalid("Invalid completion response; no further input was sent.")
         }
@@ -341,8 +345,8 @@ final class JevClient {
             throw ControllerError.invalid("Invalid Jev response")
         }
 
-        let done = (answers["done"] as? [String: Any])?["noul"] as? Double ?? 0
-        let absent = (answers["absent"] as? [String: Any])?["noul"] as? Double ?? 0
+        let done = (answers["done"] as? [String: Any])?["probability"] as? Double ?? 0
+        let absent = (answers["absent"] as? [String: Any])?["probability"] as? Double ?? 0
 
         guard let opAnswer = answers["operation"] as? [String: Any],
               let opChoice = opAnswer["choice"] as? String else {
